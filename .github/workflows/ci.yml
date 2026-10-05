@@ -1,0 +1,93 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      - run: pip install platformio
+      - run: pio run -e esp32
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            .pio/build/esp32/firmware.bin
+            .pio/build/esp32/firmware.elf
+
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y sigrok-cli
+      - run: pip install -r requirements.txt
+      - run: pytest tests/host --junitxml=reports/host.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-host
+          path: reports/host.xml
+
+  sim-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    # fork PRs do not get the token
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: .pio/build/esp32
+      - run: sudo apt-get update && sudo apt-get install -y sigrok-cli
+      - run: pip install -r requirements.txt
+      - run: pytest tests/sim --junitxml=reports/sim.xml
+        env:
+          WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
+          REQUIRE_SIM: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-sim
+          path: reports/sim.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-captures
+          path: artifacts/
+          if-no-files-found: ignore
+
+  report:
+    needs: [host-tests, sim-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: reports
+          merge-multiple: true
+      - name: Test ID summary
+        run: python3 tools/junit_summary.py reports/*.xml >> "$GITHUB_STEP_SUMMARY"

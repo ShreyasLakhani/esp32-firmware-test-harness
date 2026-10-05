@@ -1,0 +1,5 @@
+platformio>=6.1
+pytest>=8
+hypothesis>=6.100
+pillow>=10
+wokwi-client==0.5.1

@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# PlatformIO and test output
+.pio/
+artifacts/
+*.so
+# PlatformIO uses lib/ for project libraries
+!lib/
