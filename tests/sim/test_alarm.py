@@ -11,7 +11,11 @@ def raise_alarm(node):
     node.advance(0.2)
     node.mark()
     node.pot(HIGH)
-    return node.wait_line(r"^EVT ALARM value=(\d+) thr=(\d+)$", timeout=1)
+    m = node.wait_line(r"^EVT ALARM value=(\d+) thr=(\d+)$", timeout=1)
+    # the loop is busy while the alarm screen draws, so wait for it.
+    # a short press during the redraw can be missed (see ALM-04 in docs)
+    node.wait_line(r"^EVT SCREEN ALARM$", timeout=1)
+    return m
 
 
 @pytest.mark.test_id("ALM-01")

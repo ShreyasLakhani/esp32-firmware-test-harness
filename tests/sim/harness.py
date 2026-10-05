@@ -144,7 +144,7 @@ class Node:
     def pot(self, position):
         self.client.set_control("pot", "position", float(position))
 
-    def press(self, hold=0.1):
+    def press(self, hold=0.2):
         self.client.set_control("btn", "pressed", 1)
         self.advance(hold)
         self.client.set_control("btn", "pressed", 0)

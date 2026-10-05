@@ -72,3 +72,4 @@ SPI-01 and SPI-02 save screenshots to artifacts/. To set the references, take sp
 - Stuck check is off by default because the simulated pot does not move by itself.
 - Accel range is fixed at 2 g.
 - Screen checks use the corner color plus an optional reference image, not OCR.
+- The button is read in the main loop. A full screen redraw blocks the loop for a few tens of ms, so a very short press during a redraw can be missed. ALM tests wait for the screen to finish before pressing. An interrupt would fix this.
