@@ -3,6 +3,7 @@
 Sim time only moves when we ask it to (wait_until_simulation_time),
 so timing checks do not depend on how fast CI is.
 """
+import json
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ from tools import frame as pyframe
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / ".pio" / "build" / "esp32"
 STEP_S = 0.05
+POT_START = 512 / 1023  # "value": "512" in diagram.json
 
 
 class SimTimeout(AssertionError):
@@ -26,6 +28,8 @@ class Node:
         self.client = WokwiClientSync(token)
         self.client.connect()
         self.client.upload_file("diagram.json", Path(diagram))
+        parts = json.loads(Path(diagram).read_text())["parts"]
+        self.has_imu = any(p["id"] == "imu" for p in parts)
         self.client.upload_file("firmware.bin", BUILD / "firmware.bin")
         self.client.upload_file("firmware.elf", BUILD / "firmware.elf")
         self._lock = threading.Lock()
@@ -51,6 +55,8 @@ class Node:
             self.client.restart_simulation(pause=True)
         self.client.last_pause_nanos = 0
         self.t = 0.0
+        # restart keeps the part controls from the last test, so put them back
+        self.reset_controls()
         self.client.serial_monitor(self._on_serial)
         self.wait_line(r"^READY$", timeout=5)
 
@@ -126,6 +132,14 @@ class Node:
         assert not hits, f"unexpected lines: {hits}"
 
     # ---- parts ----
+
+    def reset_controls(self):
+        """Same start values as diagram.json."""
+        self.client.set_control("pot", "position", POT_START)
+        self.client.set_control("btn", "pressed", 0)
+        if self.has_imu:
+            for name, value in (("accelX", 0.0), ("accelY", 0.0), ("accelZ", 1.0)):
+                self.client.set_control("imu", name, value)
 
     def pot(self, position):
         self.client.set_control("pot", "position", float(position))
