@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 
+from websockets.exceptions import ConnectionClosed, InvalidStatusCode
 from wokwi_client import WokwiClientSync
 
 from tools import frame as pyframe
@@ -23,15 +24,20 @@ class SimTimeout(AssertionError):
     pass
 
 
+# Wokwi sometimes drops the websocket or returns 503 for a few seconds.
+# Retry the connection instead of failing the test.
+NET_ERRORS = (ConnectionClosed, InvalidStatusCode, OSError)
+RETRIES = 3
+
+
 class Node:
     def __init__(self, token, diagram=ROOT / "diagram.json"):
-        self.client = WokwiClientSync(token)
-        self.client.connect()
-        self.client.upload_file("diagram.json", Path(diagram))
-        parts = json.loads(Path(diagram).read_text())["parts"]
+        self.token = token
+        self.diagram = Path(diagram)
+        parts = json.loads(self.diagram.read_text())["parts"]
         self.has_imu = any(p["id"] == "imu" for p in parts)
-        self.client.upload_file("firmware.bin", BUILD / "firmware.bin")
-        self.client.upload_file("firmware.elf", BUILD / "firmware.elf")
+        self.client = None
+        self._retry(self._connect, reconnect=False)
         self._lock = threading.Lock()
         self._buf = ""
         self.lines = []
@@ -39,10 +45,36 @@ class Node:
         self.t = 0.0
         self.started = False
 
+    # ---- connection ----
+
+    def _connect(self):
+        self.close()
+        self.client = WokwiClientSync(self.token)
+        self.client.connect()
+        self.client.upload_file("diagram.json", self.diagram)
+        self.client.upload_file("firmware.bin", BUILD / "firmware.bin")
+        self.client.upload_file("firmware.elf", BUILD / "firmware.elf")
+        self.started = False
+
+    def _retry(self, fn, reconnect=True):
+        for i in range(RETRIES):
+            try:
+                if i > 0 and reconnect:
+                    self._connect()
+                return fn()
+            except NET_ERRORS as e:
+                if i == RETRIES - 1:
+                    raise
+                print(f"wokwi connection error, retry {i + 1}: {e!r}")
+                time.sleep(5 * (i + 1))
+
     # ---- sim control ----
 
     def start(self):
         """(Re)start the sim from reset and wait for READY."""
+        self._retry(self._start)
+
+    def _start(self):
         self.client.stop_serial_monitors()
         with self._lock:
             self._buf = ""
@@ -61,6 +93,8 @@ class Node:
         self.wait_line(r"^READY$", timeout=5)
 
     def close(self):
+        if self.client is None:
+            return
         try:
             self.client.disconnect()
         except Exception:
